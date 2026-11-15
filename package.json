@@ -1,0 +1,28 @@
+{
+  "name": "nthu-syllabus-search",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "清大課綱關鍵字搜尋：匯入校方課綱總表 PDF，產生每學期一個資料檔，前端以一支 script 嵌入學校 CMS",
+  "scripts": {
+    "import": "tsx src/build-index.ts",
+    "build": "node scripts/build-site.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^6.5.438",
+    "unpdf": "^2.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "esbuild": "^0.28.0",
+    "happy-dom": "^18.0.0",
+    "tsx": "^4.23.13",
+    "typescript": "^5",
+    "vitest": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

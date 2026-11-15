@@ -1,0 +1,37 @@
+[
+  {
+    "id": "11510",
+    "label": "115 學年度第 1 學期",
+    "url": "https://curricul.site.nthu.edu.tw/var/file/208/1208/img/4645/11510all_syllabus_pdf.htm",
+    "updatedAt": "2026-11-15T06:26:38.937Z",
+    "count": 1427,
+    "noText": 2,
+    "failed": 1,
+    "failures": [
+      {
+        "code": "11510KHCT100400",
+        "error": "Page dictionary kid reference points to wrong type of object."
+      }
+    ]
+  },
+  {
+    "id": "11420",
+    "label": "114 學年度第 2 學期",
+    "url": "https://curricul.site.nthu.edu.tw/var/file/208/1208/img/4645/11420_all_syllabus_pdf.htm",
+    "updatedAt": "2026-11-15T06:24:23.386Z",
+    "count": 1323,
+    "noText": 1,
+    "failed": 0,
+    "failures": []
+  },
+  {
+    "id": "11410",
+    "label": "114 學年度第 1 學期",
+    "url": "https://curricul.site.nthu.edu.tw/var/file/208/1208/img/4645/11410all_syllabus_PDF.htm",
+    "updatedAt": "2026-11-15T06:22:38.450Z",
+    "count": 1441,
+    "noText": 2,
+    "failed": 0,
+    "failures": []
+  }
+]

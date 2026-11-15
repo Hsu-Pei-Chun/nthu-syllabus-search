@@ -1,0 +1,77 @@
+name: 更新課綱並發布
+
+on:
+  # 新學期：Actions → 更新課綱並發布 → Run workflow，貼上新的課綱總表網址
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 課綱總表網址（留空＝重新整理最新一個學期）
+        required: false
+        default: ''
+  # 每週一 03:00（台灣時間）自動重新整理最新學期，只會下載有變動的 PDF
+  schedule:
+    - cron: '0 19 * * 0'
+  # 程式有修改時重新發布網站（不重新匯入）
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: site
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: 匯入課綱
+        if: github.event_name != 'push'
+        env:
+          INDEX_URL: ${{ inputs.url }}
+        run: npx tsx src/build-index.ts "$INDEX_URL"
+
+      - name: 提交資料變更
+        if: github.event_name != 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          if git diff --cached --quiet; then
+            echo "課綱資料沒有變動"
+          else
+            git commit -m "更新課綱資料（$(date -u +%Y-%m-%d)）"
+            git push
+          fi
+
+      - run: npm test
+
+      - run: npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
