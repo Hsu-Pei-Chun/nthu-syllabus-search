@@ -56,6 +56,16 @@ describe('匯入', () => {
     expect(f.docs.map(d => [d.name, d.text])).toEqual([['新課名', 'AI']]);
   });
 
+  it('內容完全沒變時不重寫檔案：更新時間維持上次有變動的時間，排程才不會每週產生空的提交', async () => {
+    const courses = { '11420AAA 100100': { name: '課' } };
+    const pdfs = { '11420AAA 100100': { text: 'x', etag: '"a1"' } };
+    await importSemester({ url: URL1, dataDir, extract, fetchImpl: fakeSite(courses, pdfs).fetchImpl, now: () => new Date('2026-01-01T00:00:00Z') });
+    const r = await importSemester({ url: URL1, dataDir, extract, fetchImpl: fakeSite(courses, pdfs).fetchImpl, now: () => new Date('2026-02-01T00:00:00Z') });
+    expect(r.unchanged).toBe(1);
+    expect((await read('11420')).updatedAt).toBe('2026-01-01T00:00:00.000Z');
+    expect((await list())[0].updatedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+
   it('下載失敗：保留上次的文字讓搜尋仍可用，記下錯誤；下次不帶 ETag 整個重抓', async () => {
     const pdfs: Record<string, Pdf> = { '11420AAA 100100': { text: '舊文字', etag: '"a1"' } };
     const courses = { '11420AAA 100100': { name: '課' } };

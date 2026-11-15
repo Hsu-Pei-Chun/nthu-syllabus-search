@@ -145,20 +145,29 @@ export async function importSemester(opts: Options): Promise<ImportResult> {
 
   const removed = [...prev.keys()].filter(c => !out.has(c)).length;
   const docs = [...out.values()].sort((a, b) => a.code.localeCompare(b.code));
-  const updatedAt = now().toISOString();
   const label = semesterLabel(id);
-  await writeAtomic(file, serializeSemester({ id, label, url: opts.url, updatedAt, docs }));
+  const list = (await readJson<SemesterInfo[]>(semestersFile(opts.dataDir), []));
+  const prevInfo = list.find(s => s.id === id);
 
+  // 內容完全沒變就不重寫：更新時間代表「課綱上次有變動」，排程也不會每週產生空的提交
+  const sameDocs = prevFile !== null && prevFile.url === opts.url && JSON.stringify(prevFile.docs) === JSON.stringify(docs);
+  if (sameDocs && prevInfo) {
+    log(`完成：沒有任何變動（未變更 ${unchanged}、失敗 ${failed}），資料檔維持不變`);
+    return { info: prevInfo, updated, unchanged, failed, removed };
+  }
+
+  const updatedAt = now().toISOString();
+  await writeAtomic(file, serializeSemester({ id, label, url: opts.url, updatedAt, docs }));
   const info: SemesterInfo = {
     id, label, url: opts.url, updatedAt, count: docs.length,
     noText: docs.filter(d => !d.error && !d.text).length,
     failed: docs.filter(d => d.error).length,
     failures,
   };
-  const list = (await readJson<SemesterInfo[]>(semestersFile(opts.dataDir), [])).filter(s => s.id !== id);
-  list.push(info);
-  list.sort((a, b) => b.id.localeCompare(a.id));
-  await writeAtomic(semestersFile(opts.dataDir), JSON.stringify(list, null, 2) + '\n');
+  const semesters = list.filter(s => s.id !== id);
+  semesters.push(info);
+  semesters.sort((a, b) => b.id.localeCompare(a.id));
+  await writeAtomic(semestersFile(opts.dataDir), JSON.stringify(semesters, null, 2) + '\n');
 
   log(`完成：新增或更新 ${updated}、未變更 ${unchanged}、失敗 ${failed}、移除 ${removed}`);
   return { info, updated, unchanged, failed, removed };
