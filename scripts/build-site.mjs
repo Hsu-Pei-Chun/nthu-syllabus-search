@@ -31,7 +31,7 @@ await writeFile('site/index.html', `<!doctype html>
 <header>國立清華大學 課綱搜尋</header>
 <main>
   <h1>課綱關鍵字搜尋</h1>
-  <p class="lead">搜尋校方公告的全部課程大綱 PDF，找出包含指定關鍵字的課程。</p>
+  <p class="lead">搜尋校方公告的全部課程大綱（PDF 與文字檔），找出包含指定關鍵字的課程。</p>
   <div id="nthu-syllabus-search"></div>
   <details class="embed">
     <summary>嵌入學校 CMS 的方法</summary>

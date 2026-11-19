@@ -51,6 +51,36 @@ describe('課綱總表解析', () => {
   });
 });
 
+describe('文字檔課綱總表', () => {
+  const html = decodeHtml(new Uint8Array(readFileSync(path.join(import.meta.dirname, 'fixtures/syllabus-index-text-big5.htm'))));
+  const entries = parseSyllabusIndex(html, 'https://curricul.site.nthu.edu.tw/var/file/208/1208/img/4645/11420_all_syllabus_txt.htm');
+
+  it('每門課取出課程資料與大綱全文，沒有 PDF 網址', () => {
+    expect(entries.map(e => e.code)).toEqual(['11420AES 470100', '11420AES 510000', '11420AES 510100', '11420AES 511100']);
+    expect(entries[0]).toMatchObject({ name: '環境科學與工程', nameEn: 'Environmental Science and Engineering', teacher: '吳劍侯', time: 'R7R8R9', pdfUrl: '' });
+    expect(entries[2].text).toContain('由教授與學生擬定研究題目');
+  });
+
+  it('全文保留換行、去掉校方插入的 <x> 標籤，不含下一門課的資料', () => {
+    const t = entries[0].text!;
+    expect(t.startsWith('一、課程說明(Course Description)\nThe objectives of this course')).toBe(true);
+    expect(t).toContain('Masten, S. J. and Davis, M. L.');
+    expect(t).not.toMatch(/<|Course Number|專題演講/);
+    expect(t).not.toMatch(/\n{3}/);
+  });
+
+  it('PDF 總表的「觀看上傳之檔案」仍判斷為 PDF 課綱', () => {
+    const pdf = parseSyllabusIndex(decodeHtml(new Uint8Array(readFileSync(path.join(import.meta.dirname, 'fixtures/syllabus-index-big5.htm')))), PAGE_URL);
+    expect(pdf.every(e => e.pdfUrl && e.text === undefined)).toBe(true);
+  });
+
+  it('文字課綱裡老師自己放的 PDF 連結不會讓它被當成 PDF 課綱', () => {
+    const block = `<td>科號&nbsp;Course Number：11420EE  100100</td><tr><td>課程大綱&nbsp;Syllabus：</td></tr>
+      <tr><td>參考資料 <a href="https://x.example/ref.pdf">講義</a><br>第二行</td></tr></table></div><div>footer</div>`;
+    expect(parseSyllabusIndex(block, 'https://a.example/')[0]).toMatchObject({ pdfUrl: '', text: '參考資料 講義\n第二行' });
+  });
+});
+
 describe('學期', () => {
   it('從科號前 5 碼判斷學期（取最多數）並產生中文名稱', () => {
     expect(semesterOf(['11420AES 520500', '11420CS  101000', 'X'])).toBe('11420');

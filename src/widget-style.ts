@@ -46,6 +46,9 @@ h3 { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.4; overflow-wr
 .pdf { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--link); font-size: 14px; font-weight: 500; text-decoration: none; white-space: nowrap; }
 .pdf:hover { border-color: var(--link); background: var(--bg); }
 .pdf .icon { width: 16px; height: 16px; }
+.kind { display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px; border-radius: 999px; background: var(--bg); color: var(--muted); font-size: 13px; white-space: nowrap; }
+.full { margin-top: 8px; border-top: 1px solid var(--border); }
+.fulltext { white-space: pre-line; overflow-wrap: anywhere; font-size: 14px; line-height: 1.7; color: var(--fg); background: var(--bg); border-radius: var(--radius); padding: 12px 14px; max-height: 480px; overflow-y: auto; }
 .hits { margin-top: 12px; display: flex; flex-direction: column; gap: 12px; }
 .hit { display: flex; flex-direction: column; gap: 6px; }
 .chip { align-self: flex-start; border-radius: 999px; background: rgb(114 31 110 / .1); color: var(--primary); font-size: 12px; font-weight: 600; padding: 2px 10px; }
