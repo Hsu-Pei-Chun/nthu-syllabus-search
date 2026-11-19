@@ -4,7 +4,7 @@
 //
 // 以 Shadow DOM 隔離樣式：CMS 的 CSS 不會弄亂這裡，這裡的 CSS 也不會影響 CMS。
 // 課綱文字來自外部，一律以 textContent 放進畫面，不用 innerHTML。
-import { prepare, search, type Doc, type Indexed, type Result, type Segment } from './search.ts';
+import { prepare, search, withBriefs, type BriefLike, type Doc, type Indexed, type Result, type Segment } from './search.ts';
 import type { SemesterInfo } from './build-index.ts';
 import { CSS } from './widget-style.ts';
 
@@ -30,12 +30,34 @@ function snippet(segs: Segment[]) {
   return h('p', { class: 'snippet' }, ...segs.map(s => (s.hit ? h('mark', {}, s.text) : document.createTextNode(s.text))));
 }
 
+const DESC_FOLD = 110; // 簡述超過這個字數時先收合成三行，可展開
+
+function brief(r: Result) {
+  const parts: HTMLElement[] = [];
+  if (r.tags) parts.push(h('p', { class: 'tags' }, h('span', { class: 'label' }, 'TAG'), r.tags));
+  if (r.desc) {
+    const p = h('p', { class: 'desc' }, h('span', { class: 'label' }, '簡述'), r.desc);
+    parts.push(p);
+    if (r.desc.length > DESC_FOLD) {
+      p.classList.add('folded');
+      const toggle = h('button', { type: 'button', class: 'linkish', 'aria-expanded': 'false' }, '展開簡述');
+      toggle.addEventListener('click', () => {
+        const open = p.classList.toggle('folded') === false;
+        toggle.setAttribute('aria-expanded', String(open));
+        toggle.textContent = open ? '收合簡述' : '展開簡述';
+      });
+      parts.push(toggle);
+    }
+  }
+  return parts.length ? h('div', { class: 'brief' }, ...parts) : null;
+}
+
 /** fullText：文字檔課綱的全文（沒有 PDF 可開，改在卡片內展開） */
 function card(r: Result, fullText?: string) {
   const meta = h('p', { class: 'meta' }, h('span', { class: 'mono pre' }, r.code), r.teacher ? h('span', {}, r.teacher) : null, r.time ? h('span', { class: 'mono' }, r.time) : null);
   const link = r.pdfUrl
     ? h('a', { class: 'pdf', href: r.pdfUrl, target: '_blank', rel: 'noopener noreferrer' }, '開啟 PDF', icon(ICON_EXT))
-    : h('span', { class: 'kind' }, '文字檔課綱');
+    : h('span', { class: 'kind' }, fullText ? '文字檔課綱' : '尚無課綱');
   const hits = r.hits.filter(x => x.count > 0).map(x => {
     const group = h('div', { class: 'hit' }, h('span', { class: 'chip' }, `${x.keyword} · ${x.count} 處`));
     if (x.snippets[0]) group.append(snippet(x.snippets[0]));
@@ -46,6 +68,7 @@ function card(r: Result, fullText?: string) {
   });
   return h('li', {}, h('article', { class: 'card' },
     h('div', { class: 'card-head' }, h('div', { class: 'card-title' }, h('h3', {}, r.name || r.code), meta), link),
+    brief(r),
     h('div', { class: 'hits' }, ...hits),
     fullText ? h('details', { class: 'full' }, h('summary', {}, '查看完整課綱'), h('div', { class: 'fulltext' }, fullText)) : null));
 }
@@ -68,7 +91,7 @@ export function mount(host: El, base = new URL('.', scriptSrc).href) {
       h('div', { class: 'field sem' }, h('label', { for: select.id }, '學期'), select),
       h('div', { class: 'field grow' }, h('label', { for: input.id }, '關鍵字'),
         h('div', { class: 'search-line' }, h('div', { class: 'input-wrap' }, icon(ICON_SEARCH), input), button))),
-    h('p', { class: 'hint' }, '搜尋 PDF 與文字檔課綱。多個關鍵字用逗號或頓號分隔，符合任一個就會列出；不分大小寫、會忽略斷行與空白。英文縮寫（如 AI）只比對完整單字。'));
+    h('p', { class: 'hint' }, '搜尋課綱（PDF、文字檔）與課程簡述、TAG。多個關鍵字用逗號或頓號分隔，符合任一個就會列出；不分大小寫、會忽略斷行與空白。英文縮寫（如 AI）只比對完整單字。'));
   root.append(h('div', { class: 'wrap' }, form, status, list, more));
 
   let semesters: SemesterInfo[] = [];
@@ -78,11 +101,18 @@ export function mount(host: El, base = new URL('.', scriptSrc).href) {
   let shown = 0;
   let run = 0;
 
-  const loadSemester = (id: string) => {
+  const getJson = <T,>(file: string): Promise<T> => fetch(new URL(`data/${file}`, base))
+    .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<T>; });
+
+  const loadSemester = (sem: SemesterInfo) => {
+    const id = sem.id;
     if (!cache.has(id)) {
-      const p = fetch(new URL(`data/syllabi-${id}.json`, base))
-        .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<{ docs: Doc[] }>; })
-        .then(f => prepare(f.docs));
+      // 只有簡述、還沒有課綱的學期不會有課綱檔
+      const hasSyllabi = sem.pdf === undefined || sem.pdf + (sem.textDocs ?? 0) > 0;
+      const p = Promise.all([
+        hasSyllabi ? getJson<{ docs: Doc[] }>(`syllabi-${id}.json`).then(f => f.docs) : Promise.resolve([] as Doc[]),
+        sem.briefs ? getJson<{ briefs: BriefLike[] }>(`briefs-${id}.json`).then(f => f.briefs) : Promise.resolve([] as BriefLike[]),
+      ]).then(([docs, briefs]) => prepare(withBriefs(docs, briefs)));
       p.catch(() => cache.delete(id)); // 失敗時下次可重試
       cache.set(id, p);
     }
@@ -106,7 +136,7 @@ export function mount(host: El, base = new URL('.', scriptSrc).href) {
     if (!sem) return;
     if (!cache.has(id)) status.textContent = `載入${sem.label}課綱資料中…`;
     let index: Indexed[];
-    try { index = await loadSemester(id); } catch (e) {
+    try { index = await loadSemester(sem); } catch (e) {
       if (mine === run) status.textContent = `課綱資料載入失敗（${e instanceof Error ? e.message : e}），請稍後再試。`;
       return;
     }

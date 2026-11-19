@@ -6,7 +6,7 @@ const { mount } = await import('../src/widget.ts');
 
 const BASE = 'https://cdn.example/nss/';
 const semesters = [
-  { id: '11420', label: '114 學年度第 2 學期', url: 'u2', updatedAt: '2026-11-15T00:00:00Z', count: 2, noText: 0, failed: 0, failures: [] },
+  { id: '11420', label: '114 學年度第 2 學期', url: 'u2', updatedAt: '2026-11-15T00:00:00Z', count: 2, pdf: 2, textDocs: 1, briefs: 2, noText: 0, failed: 0, failures: [] },
   { id: '11410', label: '114 學年度第 1 學期', url: 'u1', updatedAt: '2026-08-01T00:00:00Z', count: 1, noText: 0, failed: 0, failures: [] },
 ];
 const doc = (code: string, name: string, text: string) => ({ code, name, nameEn: '', teacher: '王老師', time: 'M3M4', pdfUrl: `https://pdf.example/${code}.pdf`, text });
@@ -19,6 +19,10 @@ const files: Record<string, unknown> = {
     { ...doc('11420CCC 300300', '文字檔的課', '一、課程說明\n永續發展<b>概論</b>'), pdfUrl: '' },
   ] },
   'data/syllabi-11410.json': { docs: [doc('11410CCC 300300', '上學期的課', 'AI')] },
+  'data/briefs-11420.json': { briefs: [
+    { code: '11420AAA 100100', name: '人工智慧導論', nameEn: '', teacher: '王老師', lang: '中', tags: '機器學習, 深度學習', desc: '簡'.repeat(150) },
+    { code: '11420DDD 400400', name: '只有簡述的課', nameEn: '', teacher: '李老師', lang: '中', tags: '量子計算', desc: '介紹量子位元' },
+  ] },
 };
 
 beforeAll(() => {
@@ -75,6 +79,32 @@ describe('嵌入小工具', () => {
     expect(card.querySelector('details.full summary')!.textContent).toBe('查看完整課綱');
     expect(card.querySelector('.fulltext')!.textContent).toBe('一、課程說明\n永續發展<b>概論</b>');
     expect(card.querySelector('.fulltext b')).toBeNull();
+  });
+
+  it('卡片顯示 TAG 與簡述；簡述過長先收合，可展開', async () => {
+    const w = await setup();
+    await w.search('人工智慧導論');
+    const card = w.$$('article')[0];
+    expect(card.querySelector('.tags')!.textContent).toBe('TAG機器學習, 深度學習');
+    const desc = card.querySelector('.desc')!;
+    expect(desc.classList.contains('folded')).toBe(true);
+    const toggle = card.querySelector('button.linkish') as HTMLButtonElement;
+    expect(toggle.textContent).toBe('展開簡述');
+    toggle.click();
+    expect(desc.classList.contains('folded')).toBe(false);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(toggle.textContent).toBe('收合簡述');
+  });
+
+  it('用 TAG 搜得到；只有簡述、沒有課綱的課標示「尚無課綱」', async () => {
+    const w = await setup();
+    await w.search('量子計算');
+    const card = w.$$('article')[0];
+    expect(card.querySelector('h3')!.textContent).toBe('只有簡述的課');
+    expect(card.querySelector('.kind')!.textContent).toBe('尚無課綱');
+    expect(card.querySelector('.fulltext')).toBeNull();
+    expect(card.querySelector('.desc')!.textContent).toBe('簡述介紹量子位元');
+    expect(card.querySelector('button.linkish')).toBeNull();
   });
 
   it('PDF 課綱的卡片不附全文', async () => {

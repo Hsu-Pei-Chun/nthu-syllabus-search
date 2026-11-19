@@ -6,10 +6,12 @@
       "https://curricul.site.nthu.edu.tw/var/file/208/1208/img/4645/11510all_syllabus_pdf.htm",
       "https://curricul.site.nthu.edu.tw/var/file/208/1208/img/4645/11510_all_syllabus.htm"
     ],
-    "updatedAt": "2026-11-19T15:08:39.463Z",
+    "updatedAt": "2026-11-19T15:48:19.176Z",
     "count": 3049,
     "pdf": 1427,
     "textDocs": 1622,
+    "briefs": 3049,
+    "briefSource": "https://curricul.site.nthu.edu.tw/var/file/208/1208/img/4645/11510_desc_tag.xlsx",
     "noText": 3,
     "failed": 1,
     "failures": [
@@ -26,10 +28,12 @@
       "https://curricul.site.nthu.edu.tw/var/file/208/1208/img/4645/11420_all_syllabus_pdf.htm",
       "https://curricul.site.nthu.edu.tw/var/file/208/1208/img/4645/11420_all_syllabus_txt.htm"
     ],
-    "updatedAt": "2026-11-19T15:08:40.259Z",
-    "count": 2896,
+    "updatedAt": "2026-11-19T15:48:19.495Z",
+    "count": 2898,
     "pdf": 1323,
     "textDocs": 1573,
+    "briefs": 2898,
+    "briefSource": "file:11420_brief.xlsx",
     "noText": 1,
     "failed": 0,
     "failures": []
@@ -41,10 +45,12 @@
       "https://curricul.site.nthu.edu.tw/var/file/208/1208/img/4645/11410all_syllabus_PDF.htm",
       "https://curricul.site.nthu.edu.tw/var/file/208/1208/img/4645/11410all_syllabus.htm"
     ],
-    "updatedAt": "2026-11-19T15:08:41.086Z",
-    "count": 3103,
+    "updatedAt": "2026-11-19T15:48:19.766Z",
+    "count": 3107,
     "pdf": 1441,
     "textDocs": 1662,
+    "briefs": 3010,
+    "briefSource": "file:11410_brief.xlsx",
     "noText": 2,
     "failed": 0,
     "failures": []
