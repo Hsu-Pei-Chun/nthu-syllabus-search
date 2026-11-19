@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       url:
-        description: 課綱總表網址，PDF 與文字檔兩個網址用空白隔開（留空＝重新整理最新一個學期）
+        description: 網址用空白隔開：PDF 總表、文字檔總表、簡述／TAG 的 Excel（留空＝重新整理最新一個學期）
         required: false
         default: ''
   # 每週一 03:00（台灣時間）自動重新整理最新學期的所有總表，只會下載有變動的 PDF

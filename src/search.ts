@@ -64,14 +64,35 @@ export function findHits(text: string, keyword: string, maxSnippets = 3): Keywor
   return { keyword, count, snippets };
 }
 
-export type Doc = { code: string; name: string; nameEn: string; teacher: string; time: string; pdfUrl: string; text: string };
+/** tags／desc：課程 TAG 與簡述（來自另一份 Excel，載入時依科號合併；沒有時不存在） */
+export type Doc = { code: string; name: string; nameEn: string; teacher: string; time: string; pdfUrl: string; text: string; tags?: string; desc?: string };
 export type Result = Omit<Doc, 'text'> & { total: number; hits: KeywordHits[] };
 export type Indexed = { doc: Doc; searchable: string; compact: string };
+
+export type BriefLike = { code: string; name: string; nameEn: string; teacher: string; tags: string; desc: string };
+
+/**
+ * 把簡述／TAG 依科號併進課綱。只有簡述、沒有課綱的課也列入（pdfUrl、text 皆為空），
+ * 這樣用 TAG 或簡述搜尋時也找得到。
+ */
+export function withBriefs(docs: Doc[], briefs: BriefLike[]): Doc[] {
+  const map = new Map(briefs.map(b => [b.code, b]));
+  const out: Doc[] = docs.map(d => {
+    const b = map.get(d.code);
+    if (!b) return d;
+    map.delete(d.code);
+    return { ...d, nameEn: d.nameEn || b.nameEn, teacher: d.teacher || b.teacher, tags: b.tags, desc: b.desc };
+  });
+  for (const b of map.values()) {
+    out.push({ code: b.code, name: b.name, nameEn: b.nameEn, teacher: b.teacher, time: '', pdfUrl: '', text: '', tags: b.tags, desc: b.desc });
+  }
+  return out;
+}
 
 /** 預先算好每份課綱的搜尋用字串（載入資料檔後做一次） */
 export function prepare(docs: Doc[]): Indexed[] {
   return docs.map(doc => {
-    const searchable = [doc.code, doc.name, doc.nameEn, doc.teacher, doc.text].join('\n');
+    const searchable = [doc.code, doc.name, doc.nameEn, doc.teacher, doc.tags ?? '', doc.desc ?? '', doc.text].join('\n');
     return { doc, searchable, compact: compactText(searchable) };
   });
 }
