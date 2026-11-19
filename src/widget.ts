@@ -30,9 +30,12 @@ function snippet(segs: Segment[]) {
   return h('p', { class: 'snippet' }, ...segs.map(s => (s.hit ? h('mark', {}, s.text) : document.createTextNode(s.text))));
 }
 
-function card(r: Result) {
+/** fullText：文字檔課綱的全文（沒有 PDF 可開，改在卡片內展開） */
+function card(r: Result, fullText?: string) {
   const meta = h('p', { class: 'meta' }, h('span', { class: 'mono pre' }, r.code), r.teacher ? h('span', {}, r.teacher) : null, r.time ? h('span', { class: 'mono' }, r.time) : null);
-  const link = h('a', { class: 'pdf', href: r.pdfUrl, target: '_blank', rel: 'noopener noreferrer' }, '開啟 PDF', icon(ICON_EXT));
+  const link = r.pdfUrl
+    ? h('a', { class: 'pdf', href: r.pdfUrl, target: '_blank', rel: 'noopener noreferrer' }, '開啟 PDF', icon(ICON_EXT))
+    : h('span', { class: 'kind' }, '文字檔課綱');
   const hits = r.hits.filter(x => x.count > 0).map(x => {
     const group = h('div', { class: 'hit' }, h('span', { class: 'chip' }, `${x.keyword} · ${x.count} 處`));
     if (x.snippets[0]) group.append(snippet(x.snippets[0]));
@@ -43,7 +46,8 @@ function card(r: Result) {
   });
   return h('li', {}, h('article', { class: 'card' },
     h('div', { class: 'card-head' }, h('div', { class: 'card-title' }, h('h3', {}, r.name || r.code), meta), link),
-    h('div', { class: 'hits' }, ...hits)));
+    h('div', { class: 'hits' }, ...hits),
+    fullText ? h('details', { class: 'full' }, h('summary', {}, '查看完整課綱'), h('div', { class: 'fulltext' }, fullText)) : null));
 }
 
 export function mount(host: El, base = new URL('.', scriptSrc).href) {
@@ -64,11 +68,12 @@ export function mount(host: El, base = new URL('.', scriptSrc).href) {
       h('div', { class: 'field sem' }, h('label', { for: select.id }, '學期'), select),
       h('div', { class: 'field grow' }, h('label', { for: input.id }, '關鍵字'),
         h('div', { class: 'search-line' }, h('div', { class: 'input-wrap' }, icon(ICON_SEARCH), input), button))),
-    h('p', { class: 'hint' }, '多個關鍵字用逗號或頓號分隔，符合任一個就會列出；不分大小寫、會忽略 PDF 裡的斷行與空白。英文縮寫（如 AI）只比對完整單字。'));
+    h('p', { class: 'hint' }, '搜尋 PDF 與文字檔課綱。多個關鍵字用逗號或頓號分隔，符合任一個就會列出；不分大小寫、會忽略斷行與空白。英文縮寫（如 AI）只比對完整單字。'));
   root.append(h('div', { class: 'wrap' }, form, status, list, more));
 
   let semesters: SemesterInfo[] = [];
   const cache = new Map<string, Promise<Indexed[]>>();
+  let byCode = new Map<string, Doc>();
   let results: Result[] = [];
   let shown = 0;
   let run = 0;
@@ -86,7 +91,7 @@ export function mount(host: El, base = new URL('.', scriptSrc).href) {
 
   function renderMore() {
     const next = results.slice(shown, shown + PAGE);
-    list.append(...next.map(card));
+    list.append(...next.map(r => card(r, r.pdfUrl ? undefined : byCode.get(r.code)?.text)));
     shown += next.length;
     const left = results.length - shown;
     more.hidden = left <= 0;
@@ -106,6 +111,7 @@ export function mount(host: El, base = new URL('.', scriptSrc).href) {
       return;
     }
     if (mine !== run) return; // 使用者已經改了條件
+    byCode = new Map(index.map(x => [x.doc.code, x.doc]));
     const r = search(index, q);
     results = r.results; shown = 0; list.replaceChildren();
     const updated = sem.updatedAt.slice(0, 10);

@@ -16,6 +16,7 @@ const files: Record<string, unknown> = {
     // 命中處彼此相距超過前後文長度，才會各自成為一段片段
     doc('11420AAA 100100', '人工智慧導論', Array(5).fill('AI 應用').join('，' + '其他課程內容'.repeat(10) + '，')),
     doc('11420BBB 200200', '<img src=x onerror="window.__xss=1">', '本課提到 AI 一次'),
+    { ...doc('11420CCC 300300', '文字檔的課', '一、課程說明\n永續發展<b>概論</b>'), pdfUrl: '' },
   ] },
   'data/syllabi-11410.json': { docs: [doc('11410CCC 300300', '上學期的課', 'AI')] },
 };
@@ -62,6 +63,24 @@ describe('嵌入小工具', () => {
     const second = w.$$('article')[1];
     expect(second.querySelector('h3')!.textContent).toBe('<img src=x onerror="window.__xss=1">');
     expect(second.querySelector('img')).toBeNull();
+  });
+
+  it('文字檔課綱沒有 PDF：顯示「文字檔課綱」，可展開完整課綱（純文字、保留換行）', async () => {
+    const w = await setup();
+    await w.search('永續');
+    const card = w.$$('article')[0];
+    expect(card.querySelector('h3')!.textContent).toBe('文字檔的課');
+    expect(card.querySelector('a.pdf')).toBeNull();
+    expect(card.querySelector('.kind')!.textContent).toBe('文字檔課綱');
+    expect(card.querySelector('details.full summary')!.textContent).toBe('查看完整課綱');
+    expect(card.querySelector('.fulltext')!.textContent).toBe('一、課程說明\n永續發展<b>概論</b>');
+    expect(card.querySelector('.fulltext b')).toBeNull();
+  });
+
+  it('PDF 課綱的卡片不附全文', async () => {
+    const w = await setup();
+    await w.search('AI');
+    expect(w.$$('article')[0].querySelector('.fulltext')).toBeNull();
   });
 
   it('切換學期只載入該學期的資料檔', async () => {

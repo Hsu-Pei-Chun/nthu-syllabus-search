@@ -1,6 +1,9 @@
 // 解析校方「全部課程大綱」總表頁（純函式，不連網，方便測試）。
 // 總表頁格式：每門課一個區塊，含「科號 Course Number：…」「中文名稱 Course Title：…」等欄位，
-// 以及一個指向課綱 PDF 的連結。若網址換成別種格式的頁面，退而求其次：抓出頁面上所有 .pdf 連結。
+// 以及「課程大綱 Syllabus：」欄。老師上傳課綱時可選 PDF 或文字：校方分成兩種總表頁，
+//   PDF 總表：大綱欄是「觀看上傳之檔案」連結 → pdfUrl
+//   文字檔總表：大綱欄直接是全文 → text（pdfUrl 為空字串）
+// 若網址換成別種格式的頁面，退而求其次：抓出頁面上所有 .pdf 連結。
 
 export type SyllabusEntry = {
   code: string;
@@ -8,7 +11,10 @@ export type SyllabusEntry = {
   nameEn: string;
   teacher: string;
   time: string;
+  /** 文字檔課綱為空字串 */
   pdfUrl: string;
+  /** 只有文字檔課綱才有：大綱全文（保留換行） */
+  text?: string;
 };
 
 /** 依 HTTP 標頭或 <meta charset> 決定編碼；都沒寫時先試 UTF-8，不合法再用 Big5（清大舊系統的總表是 Big5）。 */
@@ -56,6 +62,12 @@ function resolver(html: string, pageUrl: string): (href: string) => string {
   return (href) => new URL(href.replace(/&amp;/g, '&'), base).href;
 }
 
+/** 文字檔課綱整理：每行去頭尾空白、行內連續空白收成一個、空行最多一行 */
+function tidy(text: string): string {
+  return text.split('\n').map(l => l.replace(/[ \t　 ]+/g, ' ').trim()).join('\n')
+    .replace(/\n{3,}/g, '\n\n').trim();
+}
+
 export function parseSyllabusIndex(html: string, pageUrl: string): SyllabusEntry[] {
   const resolve = resolver(html, pageUrl);
   const seen = new Set<string>();
@@ -69,17 +81,26 @@ export function parseSyllabusIndex(html: string, pageUrl: string): SyllabusEntry
   // 以「Course Number」切出每門課的區塊（區塊內才有該課的 PDF 連結）
   const blocks = html.split(/(?=科號(?:&nbsp;|\s)*Course Number)/i).slice(1);
   for (const block of blocks) {
-    const link = pdfLinks(block)[0];
-    if (!link) continue;
-    const text = htmlToText(block);
-    push({
+    // 「課程大綱 Syllabus：」之後是大綱欄；之前是課程資料
+    const [head, syllabus] = block.split(/課程大綱(?:&nbsp;|\s)*Syllabus\s*[：:]/i, 2) as [string, string | undefined];
+    const text = htmlToText(head);
+    const meta = {
       code: field(text, 'Course Number', true), // 科號內的空格是補位，需原樣保留（與課程管理的科號一致）
       name: field(text, 'Course Title'),
       nameEn: field(text, 'Course English Title'),
       teacher: field(text, 'Instructor'),
       time: field(text, 'Time'),
-      pdfUrl: resolve(link),
-    });
+    };
+    if (syllabus !== undefined) {
+      // 大綱欄只有「觀看上傳之檔案」連結的是 PDF 課綱；其他是老師直接填的文字（文字裡可能也有連結）
+      const uploaded = /<a\b[^>]*href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>\s*觀看上傳之檔案/i.exec(syllabus);
+      if (uploaded) { push({ ...meta, pdfUrl: resolve((uploaded[1] ?? uploaded[2] ?? uploaded[3]).trim()) }); continue; }
+      const body = tidy(htmlToText(syllabus.replace(/<\/table>[\s\S]*$/i, '')));
+      push({ ...meta, pdfUrl: '', text: body });
+      continue;
+    }
+    const link = pdfLinks(block)[0];
+    if (link) push({ ...meta, pdfUrl: resolve(link) });
   }
   if (out.length > 0) return out;
 

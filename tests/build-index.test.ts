@@ -26,6 +26,20 @@ function fakeSite(courses: Record<string, { name: string; teacher?: string }>, p
 }
 const extract = async (bytes: Uint8Array) => ({ pages: 1, text: new TextDecoder().decode(bytes).replace('%PDF-1.4 ', '') });
 const URL1 = 'https://school.example/11420/all.htm';
+const TXT = 'https://school.example/11420/all_txt.htm';
+
+// 假的文字檔總表：大綱全文直接在頁面上
+function textSite(courses: Record<string, { name: string; text: string }>) {
+  const requests: string[] = [];
+  const html = Object.entries(courses).map(([code, c]) =>
+    `<td>科號&nbsp;Course Number：${code}</td><td>中文名稱&nbsp;Course Title：${c.name}</td>` +
+    `<tr><td>課程大綱&nbsp;Syllabus：</td></tr><tr><td>${c.text}</td></tr></table>`).join('\n');
+  const fetchImpl = (async (input: string | URL) => {
+    requests.push(String(input));
+    return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+  }) as typeof fetch;
+  return { fetchImpl, requests };
+}
 
 describe('匯入', () => {
   let dataDir: string;
@@ -92,6 +106,48 @@ describe('匯入', () => {
       fetchImpl: fakeSite({ '11420AAA 100100': { name: '下學期' } }, { '11420AAA 100100': { text: 'y', etag: '"2"' } }).fetchImpl });
     expect((await list()).map(s => s.id)).toEqual(['11420', '11410']);
     expect((await read('11410')).docs[0].name).toBe('上學期');
+  });
+
+  it('同一學期的 PDF 總表與文字檔總表合併在同一個檔案；文字檔課綱不下載', async () => {
+    const pdfSite = fakeSite({ '11420AAA 100100': { name: 'PDF 課' } }, { '11420AAA 100100': { text: 'pdf 內容', etag: '"a1"' } });
+    await importSemester({ url: URL1, dataDir, fetchImpl: pdfSite.fetchImpl, extract });
+    const txt = textSite({ '11420BBB 200200': { name: '文字課', text: '第一行<br>永續發展' } });
+    const r = await importSemester({ url: TXT, dataDir, fetchImpl: txt.fetchImpl, extract });
+    expect(txt.requests).toEqual([TXT]);
+    expect([r.updated, r.removed]).toEqual([1, 0]);
+    const f = await read('11420');
+    expect(f.sources).toEqual([URL1, TXT]);
+    expect(f.docs.map(d => [d.code, d.pdfUrl ? 'pdf' : 'text', d.text, d.source])).toEqual([
+      ['11420AAA 100100', 'pdf', 'pdf 內容', URL1], ['11420BBB 200200', 'text', '第一行\n永續發展', TXT]]);
+    expect((await list())[0]).toMatchObject({ sources: [URL1, TXT], count: 2, pdf: 1, textDocs: 1 });
+  });
+
+  it('再匯入其中一個總表，只增刪來自該總表的課，另一個總表的課不受影響', async () => {
+    const pdfs = { '11420AAA 100100': { text: 'pdf', etag: '"a1"' } };
+    await importSemester({ url: URL1, dataDir, fetchImpl: fakeSite({ '11420AAA 100100': { name: 'PDF 課' } }, pdfs).fetchImpl, extract });
+    await importSemester({ url: TXT, dataDir, extract, fetchImpl: textSite({ '11420BBB 200200': { name: '甲', text: 'x' }, '11420CCC 300300': { name: '乙', text: 'y' } }).fetchImpl });
+    const r = await importSemester({ url: TXT, dataDir, extract, fetchImpl: textSite({ '11420BBB 200200': { name: '甲', text: '改過' } }).fetchImpl });
+    expect([r.updated, r.unchanged, r.removed]).toEqual([1, 0, 1]);
+    expect((await read('11420')).docs.map(d => [d.code, d.text])).toEqual([['11420AAA 100100', 'pdf'], ['11420BBB 200200', '改過']]);
+  });
+
+  it('舊格式資料檔（只有 url、課綱沒有 source）可以直接沿用並轉成新格式', async () => {
+    const { writeFile } = await import('node:fs/promises');
+    const old = { etag: '"a1"', lastModified: '', pages: 1, error: '', code: '11420AAA 100100', name: '課', nameEn: '', teacher: '王老師', time: '', pdfUrl: 'https://school.example/pdf/11420AAA%20100100.pdf', text: 'x' };
+    await writeFile(semesterFile(dataDir, '11420'), JSON.stringify({ id: '11420', label: '114 學年度第 2 學期', url: URL1, updatedAt: '2026-01-01T00:00:00.000Z', docs: [old] }));
+    await writeFile(semestersFile(dataDir), JSON.stringify([{ id: '11420', label: '114 學年度第 2 學期', url: URL1, updatedAt: '2026-01-01T00:00:00.000Z', count: 1, noText: 0, failed: 0, failures: [] }]));
+    const site = fakeSite({ '11420AAA 100100': { name: '課' } }, { '11420AAA 100100': { text: 'x', etag: '"a1"' } });
+    const r = await importSemester({ url: URL1, dataDir, fetchImpl: site.fetchImpl, extract });
+    expect([r.unchanged, r.removed]).toEqual([1, 0]);
+    const f = await read('11420');
+    expect(f).toMatchObject({ sources: [URL1], updatedAt: '2026-01-01T00:00:00.000Z' });
+    expect(f.docs[0].source).toBe(URL1);
+    expect((await list())[0]).toMatchObject({ sources: [URL1], pdf: 1, textDocs: 0 });
+  });
+
+  it('校方網站顯示「網頁維護中」時報錯並說明原因', async () => {
+    const fetchImpl = (async () => new Response('<h1>網頁維護中</h1>')) as unknown as typeof fetch;
+    await expect(importSemester({ url: TXT, dataDir, fetchImpl, extract })).rejects.toThrow('網頁維護中');
   });
 
   it('總表上找不到任何課綱時報錯，不產生檔案', async () => {

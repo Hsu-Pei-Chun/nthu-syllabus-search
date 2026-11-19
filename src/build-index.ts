@@ -1,9 +1,10 @@
-// 匯入：讀校方課綱總表 → 下載 PDF 抽出文字 → 寫成 data/syllabi-<學期>.json，並更新 data/semesters.json。
-// 每學期一個檔案，舊學期不會被動到；同一學期再匯入時只下載有變動的 PDF（ETag／Last-Modified）。
+// 匯入：讀校方課綱總表 → 下載 PDF 抽出文字（文字檔課綱直接取用）→ 寫成 data/syllabi-<學期>.json，並更新 data/semesters.json。
+// 每學期一個檔案，舊學期不會被動到。同一學期可以有多個總表（PDF 總表、文字檔總表），各自匯入後合併在同一個檔案；
+// 再匯入某個總表只會更動來自該總表的課綱，PDF 只下載有變動的（ETag／Last-Modified）。
 //
 // 用法：
-//   npx tsx src/build-index.ts <總表網址>      匯入（或更新）該網址的學期
-//   npx tsx src/build-index.ts --refresh-latest  重新整理最新一個學期（排程用）
+//   npx tsx src/build-index.ts <總表網址> [<總表網址> …]   匯入（或更新）這些總表（可一次給 PDF 與文字檔兩個）
+//   npx tsx src/build-index.ts --refresh-latest            重新整理最新一個學期的所有總表（排程用）
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -11,12 +12,15 @@ import { decodeHtml, parseSyllabusIndex, type SyllabusEntry } from './parse.ts';
 import { semesterLabel, semesterOf } from './semester.ts';
 import type { Doc } from './search.ts';
 
-export type StoredDoc = Doc & { etag: string; lastModified: string; pages: number; error: string };
-export type SemesterFile = { id: string; label: string; url: string; updatedAt: string; docs: StoredDoc[] };
+/** source：這份課綱來自哪個總表網址；pdfUrl 為空字串表示文字檔課綱 */
+export type StoredDoc = Doc & { source: string; etag: string; lastModified: string; pages: number; error: string };
+export type SemesterFile = { id: string; label: string; sources: string[]; updatedAt: string; docs: StoredDoc[] };
 export type Failure = { code: string; error: string };
 export type SemesterInfo = {
-  id: string; label: string; url: string; updatedAt: string;
-  count: number; noText: number; failed: number; failures: Failure[];
+  id: string; label: string; sources: string[]; updatedAt: string;
+  /** count = pdf + textDocs */
+  count: number; pdf: number; textDocs: number;
+  noText: number; failed: number; failures: Failure[];
 };
 export type ImportResult = { info: SemesterInfo; updated: number; unchanged: number; failed: number; removed: number };
 
@@ -58,6 +62,21 @@ async function readJson<T>(file: string, fallback: T): Promise<T> {
   try { return JSON.parse(await readFile(file, 'utf8')) as T; } catch { return fallback; }
 }
 
+/** 舊版資料檔只有一個 url、課綱沒有 source：補成新格式 */
+type LegacyFile = Omit<SemesterFile, 'sources' | 'docs'> & { url?: string; sources?: string[]; docs: (Omit<StoredDoc, 'source'> & { source?: string })[] };
+async function readSemester(file: string): Promise<SemesterFile | null> {
+  const f = await readJson<LegacyFile | null>(file, null);
+  if (!f) return null;
+  const { url, ...rest } = f;
+  const sources = f.sources ?? (url ? [url] : []);
+  return { ...rest, sources, docs: f.docs.map(d => ({ ...d, source: d.source ?? url ?? '' })) };
+}
+type LegacyInfo = Partial<SemesterInfo> & { id: string; url?: string };
+async function readSemesters(dataDir: string): Promise<LegacyInfo[]> {
+  return readJson<LegacyInfo[]>(semestersFile(dataDir), []);
+}
+export const sourcesOf = (s: LegacyInfo) => s.sources ?? (s.url ? [s.url] : []);
+
 /** 先寫暫存檔再改名，避免中途失敗留下半個檔案 */
 async function writeAtomic(file: string, content: string) {
   await mkdir(path.dirname(file), { recursive: true });
@@ -67,8 +86,20 @@ async function writeAtomic(file: string, content: string) {
 
 /** 一份課綱一行：git diff 只會顯示有變動的課，倉庫也比較小 */
 export function serializeSemester(f: SemesterFile): string {
-  const head = JSON.stringify({ id: f.id, label: f.label, url: f.url, updatedAt: f.updatedAt });
+  const head = JSON.stringify({ id: f.id, label: f.label, sources: f.sources, updatedAt: f.updatedAt });
   return head.slice(0, -1) + ',"docs":[\n' + f.docs.map(d => JSON.stringify(d)).join(',\n') + '\n]}\n';
+}
+
+export function summarize(f: SemesterFile): SemesterInfo {
+  const textDocs = f.docs.filter(d => !d.pdfUrl).length;
+  const errors = f.docs.filter(d => d.error);
+  return {
+    id: f.id, label: f.label, sources: f.sources, updatedAt: f.updatedAt,
+    count: f.docs.length, pdf: f.docs.length - textDocs, textDocs,
+    noText: f.docs.filter(d => !d.error && !d.text).length,
+    failed: errors.length,
+    failures: errors.slice(0, MAX_FAILURES_KEPT).map(d => ({ code: d.code, error: d.error })),
+  };
 }
 
 export async function importSemester(opts: Options): Promise<ImportResult> {
@@ -76,18 +107,24 @@ export async function importSemester(opts: Options): Promise<ImportResult> {
   const extract = opts.extract ?? extractPdfText;
   const log = opts.log ?? (() => {});
   const now = opts.now ?? (() => new Date());
+  const source = opts.url;
 
-  const page = await fetchImpl(opts.url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(PAGE_TIMEOUT_MS), redirect: 'follow' });
+  const page = await fetchImpl(source, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(PAGE_TIMEOUT_MS), redirect: 'follow' });
   if (!page.ok) throw new Error(`總表頁讀取失敗（HTTP ${page.status}）`);
   const html = decodeHtml(new Uint8Array(await page.arrayBuffer()), page.headers.get('content-type') ?? '');
-  const entries = parseSyllabusIndex(html, page.url || opts.url);
-  if (entries.length === 0) throw new Error('總表頁上找不到任何課綱 PDF 連結，請確認網址是否正確');
+  const entries = parseSyllabusIndex(html, page.url || source);
+  if (entries.length === 0) {
+    const hint = /維護中/.test(html) ? '（校方網站顯示「網頁維護中」，請稍後再試）' : '，請確認網址是否正確';
+    throw new Error(`總表頁上找不到任何課綱${hint}`);
+  }
 
   const id = semesterOf(entries.map(e => e.code));
   const file = semesterFile(opts.dataDir, id);
-  const prevFile = await readJson<SemesterFile | null>(file, null);
-  const prev = new Map((prevFile?.docs ?? []).map(d => [d.code, d]));
-  log(`${semesterLabel(id)}：總表 ${entries.length} 門，已有資料 ${prev.size} 門`);
+  const prevFile = await readSemester(file);
+  const prevDocs = prevFile?.docs ?? [];
+  const prev = new Map(prevDocs.map(d => [d.code, d]));
+  const textCount = entries.filter(e => e.text !== undefined).length;
+  log(`${semesterLabel(id)}：總表 ${entries.length} 門（PDF ${entries.length - textCount}、文字檔 ${textCount}），此學期已有資料 ${prev.size} 門`);
 
   async function fetchDoc(entry: SyllabusEntry, old: StoredDoc | undefined): Promise<StoredDoc | 'not-modified'> {
     const headers: Record<string, string> = { 'User-Agent': UA };
@@ -104,16 +141,25 @@ export async function importSemester(opts: Options): Promise<ImportResult> {
     if (bytes.byteLength > MAX_PDF_BYTES) throw new Error('檔案過大');
     if (new TextDecoder('latin1').decode(bytes.slice(0, 1024)).indexOf('%PDF') < 0) throw new Error('不是 PDF 檔');
     const { pages, text } = await extract(bytes);
-    return { ...entry, etag: res.headers.get('etag') ?? '', lastModified: res.headers.get('last-modified') ?? '', pages, text, error: '' };
+    return { ...entry, source, etag: res.headers.get('etag') ?? '', lastModified: res.headers.get('last-modified') ?? '', pages, text, error: '' };
   }
 
   const out = new Map<string, StoredDoc>();
-  const failures: Failure[] = [];
   let updated = 0, unchanged = 0, failed = 0, done = 0, next = 0;
 
+  // 文字檔課綱：全文就在總表頁上，不必另外下載
+  const pdfEntries: SyllabusEntry[] = [];
+  for (const entry of entries) {
+    if (entry.text === undefined) { pdfEntries.push(entry); continue; }
+    const doc: StoredDoc = { ...entry, text: entry.text, pdfUrl: '', source, etag: '', lastModified: '', pages: 0, error: '' };
+    const old = prev.get(entry.code);
+    if (old && JSON.stringify(old) === JSON.stringify(doc)) unchanged++; else updated++;
+    out.set(entry.code, doc);
+  }
+
   const worker = async () => {
-    while (next < entries.length) {
-      const entry = entries[next++];
+    while (next < pdfEntries.length) {
+      const entry = pdfEntries[next++];
       const old = prev.get(entry.code);
       let lastError: unknown;
       let ok = false;
@@ -122,7 +168,7 @@ export async function importSemester(opts: Options): Promise<ImportResult> {
           const r = await fetchDoc(entry, old);
           if (r === 'not-modified') {
             // PDF 沒變，但總表上的課名、教師、時間可能改了
-            out.set(entry.code, { ...old!, ...entry });
+            out.set(entry.code, { ...old!, ...entry, source });
             unchanged++;
           } else {
             out.set(entry.code, r);
@@ -134,60 +180,71 @@ export async function importSemester(opts: Options): Promise<ImportResult> {
       if (!ok) {
         const error = lastError instanceof Error ? lastError.message : String(lastError);
         failed++;
-        if (failures.length < MAX_FAILURES_KEPT) failures.push({ code: entry.code, error });
         // 保留舊的文字讓搜尋仍可用，並記下錯誤：下次會整個重抓
-        out.set(entry.code, old ? { ...old, ...entry, error } : { ...entry, etag: '', lastModified: '', pages: 0, text: '', error });
+        out.set(entry.code, old && old.pdfUrl
+          ? { ...old, ...entry, source, error }
+          : { ...entry, text: '', source, etag: '', lastModified: '', pages: 0, error });
       }
-      if (++done % 100 === 0 || done === entries.length) log(`  已處理 ${done} / ${entries.length}`);
+      if (++done % 100 === 0 || done === pdfEntries.length) log(`  PDF 已處理 ${done} / ${pdfEntries.length}`);
     }
   };
   await Promise.all(Array.from({ length: opts.concurrency ?? 2 }, worker));
 
-  const removed = [...prev.keys()].filter(c => !out.has(c)).length;
+  // 來自這個總表、但總表上已經沒有的課 → 移除；其他總表的課原樣保留
+  const removed = prevDocs.filter(d => d.source === source && !out.has(d.code)).length;
+  for (const d of prevDocs) if (d.source !== source && !out.has(d.code)) out.set(d.code, d);
   const docs = [...out.values()].sort((a, b) => a.code.localeCompare(b.code));
+  const sources = [...new Set([...(prevFile?.sources ?? []), source])];
   const label = semesterLabel(id);
-  const list = (await readJson<SemesterInfo[]>(semestersFile(opts.dataDir), []));
+  const list = await readSemesters(opts.dataDir);
   const prevInfo = list.find(s => s.id === id);
 
   // 內容完全沒變就不重寫：更新時間代表「課綱上次有變動」，排程也不會每週產生空的提交
-  const sameDocs = prevFile !== null && prevFile.url === opts.url && JSON.stringify(prevFile.docs) === JSON.stringify(docs);
-  if (sameDocs && prevInfo) {
+  const sameDocs = prevFile !== null && prevFile.sources.includes(source) && JSON.stringify(prevFile.docs) === JSON.stringify(docs);
+  if (sameDocs && prevInfo?.sources) {
     log(`完成：沒有任何變動（未變更 ${unchanged}、失敗 ${failed}），資料檔維持不變`);
-    return { info: prevInfo, updated, unchanged, failed, removed };
+    return { info: prevInfo as SemesterInfo, updated, unchanged, failed, removed };
   }
 
-  const updatedAt = now().toISOString();
-  await writeAtomic(file, serializeSemester({ id, label, url: opts.url, updatedAt, docs }));
-  const info: SemesterInfo = {
-    id, label, url: opts.url, updatedAt, count: docs.length,
-    noText: docs.filter(d => !d.error && !d.text).length,
-    failed: docs.filter(d => d.error).length,
-    failures,
-  };
+  const semester: SemesterFile = { id, label, sources, updatedAt: (sameDocs ? prevFile!.updatedAt : now().toISOString()), docs };
+  await writeAtomic(file, serializeSemester(semester));
+  const info = summarize(semester);
   const semesters = list.filter(s => s.id !== id);
   semesters.push(info);
   semesters.sort((a, b) => b.id.localeCompare(a.id));
   await writeAtomic(semestersFile(opts.dataDir), JSON.stringify(semesters, null, 2) + '\n');
 
-  log(`完成：新增或更新 ${updated}、未變更 ${unchanged}、失敗 ${failed}、移除 ${removed}`);
+  log(`完成：新增或更新 ${updated}、未變更 ${unchanged}、失敗 ${failed}、移除 ${removed}；此學期共 ${info.count} 門（PDF ${info.pdf}、文字檔 ${info.textDocs}）`);
   return { info, updated, unchanged, failed, removed };
 }
 
 async function main() {
   const dataDir = path.resolve('data');
-  const arg = process.argv[2]?.trim();
-  let url = arg;
-  if (!arg || arg === '--refresh-latest') {
-    const latest = (await readJson<SemesterInfo[]>(semestersFile(dataDir), []))[0];
+  // 網址可以用空白、換行或逗號分隔（GitHub Actions 的輸入框只有一行）
+  let urls = process.argv.slice(2).flatMap(a => a.split(/[\s,，]+/)).filter(Boolean);
+  if (urls.length === 0 || (urls.length === 1 && urls[0] === '--refresh-latest')) {
+    const latest = (await readSemesters(dataDir))[0];
     if (!latest) throw new Error('還沒有任何學期的資料，請提供總表網址：npx tsx src/build-index.ts <網址>');
-    url = latest.url;
+    urls = sourcesOf(latest);
   }
-  if (!/^https?:\/\//i.test(url!)) throw new Error('總表網址需以 http:// 或 https:// 開頭');
-  const r = await importSemester({ url: url!, dataDir, log: m => console.log(m) });
-  // 失敗太多多半是網址錯了或校方網站故障，讓排程顯示失敗以便察覺（資料檔仍已寫入，保留舊文字）
-  if (r.info.count > 0 && r.failed / r.info.count > 0.2) {
-    console.error(`失敗比例過高（${r.failed}/${r.info.count}），請檢查網址或校方網站。`);
-    process.exitCode = 1;
+  const bad = urls.find(u => !/^https?:\/\//i.test(u));
+  if (bad) throw new Error(`總表網址需以 http:// 或 https:// 開頭：${bad}`);
+
+  // 每個總表各自匯入：其中一個失敗不影響其他的，但最後讓排程顯示失敗以便察覺
+  for (const url of urls) {
+    console.log(`\n== ${url}`);
+    try {
+      const r = await importSemester({ url, dataDir, log: m => console.log(m) });
+      const pdfInRun = r.updated + r.unchanged + r.failed;
+      // 失敗太多多半是校方網站故障（資料檔仍已寫入，保留舊文字）
+      if (pdfInRun > 0 && r.failed / pdfInRun > 0.2) {
+        console.error(`失敗比例過高（${r.failed}/${pdfInRun}），請檢查網址或校方網站。`);
+        process.exitCode = 1;
+      }
+    } catch (e) {
+      console.error(`匯入失敗：${e instanceof Error ? e.message : e}`);
+      process.exitCode = 1;
+    }
   }
 }
 

@@ -1,14 +1,14 @@
 name: 更新課綱並發布
 
 on:
-  # 新學期：Actions → 更新課綱並發布 → Run workflow，貼上新的課綱總表網址
+  # 新學期：Actions → 更新課綱並發布 → Run workflow，貼上新的課綱總表網址（PDF 與文字檔兩個，以空白分隔）
   workflow_dispatch:
     inputs:
       url:
-        description: 課綱總表網址（留空＝重新整理最新一個學期）
+        description: 課綱總表網址，PDF 與文字檔兩個網址用空白隔開（留空＝重新整理最新一個學期）
         required: false
         default: ''
-  # 每週一 03:00（台灣時間）自動重新整理最新學期，只會下載有變動的 PDF
+  # 每週一 03:00（台灣時間）自動重新整理最新學期的所有總表，只會下載有變動的 PDF
   schedule:
     - cron: '0 19 * * 0'
   # 程式有修改時重新發布網站（不重新匯入）
