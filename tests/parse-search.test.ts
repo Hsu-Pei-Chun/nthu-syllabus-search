@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { decodeHtml, parseSyllabusIndex } from '../src/parse.ts';
 import { compactText, findHits, parseKeywords, prepare, search, type Doc } from '../src/search.ts';
-import { semesterLabel, semesterOf } from '../src/semester.ts';
+import { semesterLabel, semesterLabelEn, semesterOf } from '../src/semester.ts';
 
 const PAGE_URL = 'https://curricul.site.nthu.edu.tw/var/file/208/1208/img/4645/11510all_syllabus_pdf.htm';
 
@@ -150,5 +150,14 @@ describe('搜尋', () => {
 
   it('結果不含全文（只帶片段），避免畫面拿到整份文字', () => {
     expect(search(index, '永續').results[0]).not.toHaveProperty('text');
+  });
+});
+
+describe('英文學期名稱', () => {
+  it('民國學年度轉西元：第 1 學期為秋季、第 2 學期與暑期為隔年', () => {
+    expect(semesterLabelEn('11410')).toBe('Fall 2025');
+    expect(semesterLabelEn('11420')).toBe('Spring 2026');
+    expect(semesterLabelEn('11430')).toBe('Summer 2026');
+    expect(semesterLabelEn('abc')).toBe('abc');
   });
 });

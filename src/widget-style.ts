@@ -14,10 +14,14 @@ export const CSS = `
   color: var(--fg); font-size: 16px; line-height: 1.5; text-align: left;
   font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
 }
+.lang-bar { display: flex; justify-content: flex-end; margin-bottom: -8px; }
+.lang-toggle { display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--primary); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: background-color .15s, border-color .15s; }
+.lang-toggle:hover { background: var(--bg); border-color: var(--primary); }
+.lang-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .panel { display: flex; flex-direction: column; gap: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin: 0; }
 .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.field.sem { flex: 1 1 220px; }
+.field.sem { flex: 1 1 250px; }
 .field.grow { flex: 999 1 320px; }
 label { font-size: 14px; font-weight: 600; }
 .search-line { display: flex; gap: 8px; }
@@ -40,6 +44,8 @@ label { font-size: 14px; font-weight: 600; }
 .card-head { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: flex-start; }
 .card-title { min-width: 0; flex: 1 1 260px; }
 h3 { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.alt-name { margin: 2px 0 0; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+.note[hidden] { display: none; }
 .meta { margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 14px; color: var(--muted); }
 .mono { font-family: ui-monospace, Consolas, monospace; }
 .pre { white-space: pre-wrap; }

@@ -4,9 +4,12 @@
 //
 // 以 Shadow DOM 隔離樣式：CMS 的 CSS 不會弄亂這裡，這裡的 CSS 也不會影響 CMS。
 // 課綱文字來自外部，一律以 textContent 放進畫面，不用 innerHTML。
+// 介面可切換繁體中文（預設）與英文，選擇記在 localStorage；CMS 也可用 data-lang="en" 指定預設語言。
 import { prepare, search, withBriefs, type BriefLike, type Doc, type Indexed, type Result, type Segment } from './search.ts';
 import type { SemesterInfo } from './build-index.ts';
 import { CSS } from './widget-style.ts';
+import { semesterLabelEn } from './semester.ts';
+import { MESSAGES, isLang, loadLang, saveLang, type Lang, type Messages } from './i18n.ts';
 
 const PAGE = 50;
 
@@ -32,19 +35,19 @@ function snippet(segs: Segment[]) {
 
 const DESC_FOLD = 110; // 簡述超過這個字數時先收合成三行，可展開
 
-function brief(r: Result) {
+function brief(r: Result, t: Messages) {
   const parts: HTMLElement[] = [];
   if (r.tags) parts.push(h('p', { class: 'tags' }, h('span', { class: 'label' }, 'TAG'), r.tags));
   if (r.desc) {
-    const p = h('p', { class: 'desc' }, h('span', { class: 'label' }, '簡述'), r.desc);
+    const p = h('p', { class: 'desc' }, h('span', { class: 'label' }, t.desc), r.desc);
     parts.push(p);
     if (r.desc.length > DESC_FOLD) {
       p.classList.add('folded');
-      const toggle = h('button', { type: 'button', class: 'linkish', 'aria-expanded': 'false' }, '展開簡述');
+      const toggle = h('button', { type: 'button', class: 'linkish', 'aria-expanded': 'false' }, t.expandDesc);
       toggle.addEventListener('click', () => {
         const open = p.classList.toggle('folded') === false;
         toggle.setAttribute('aria-expanded', String(open));
-        toggle.textContent = open ? '收合簡述' : '展開簡述';
+        toggle.textContent = open ? t.collapseDesc : t.expandDesc;
       });
       parts.push(toggle);
     }
@@ -53,46 +56,69 @@ function brief(r: Result) {
 }
 
 /** fullText：文字檔課綱的全文（沒有 PDF 可開，改在卡片內展開） */
-function card(r: Result, fullText?: string) {
+function card(r: Result, t: Messages, lang: Lang, fullText?: string) {
+  // 英文模式以英文課名為主、中文課名為輔；沒有英文課名時只顯示中文
+  const en = lang === 'en' && r.nameEn ? r.nameEn : '';
+  const title = h('h3', en ? { lang: 'en' } : { lang: 'zh-Hant' }, en || r.name || r.code);
+  const alt = en && r.name ? h('p', { class: 'alt-name', lang: 'zh-Hant' }, r.name) : null;
   const meta = h('p', { class: 'meta' }, h('span', { class: 'mono pre' }, r.code), r.teacher ? h('span', {}, r.teacher) : null, r.time ? h('span', { class: 'mono' }, r.time) : null);
   const link = r.pdfUrl
-    ? h('a', { class: 'pdf', href: r.pdfUrl, target: '_blank', rel: 'noopener noreferrer' }, '開啟 PDF', icon(ICON_EXT))
-    : h('span', { class: 'kind' }, fullText ? '文字檔課綱' : '尚無課綱');
+    ? h('a', { class: 'pdf', href: r.pdfUrl, target: '_blank', rel: 'noopener noreferrer' }, t.openPdf, icon(ICON_EXT))
+    : h('span', { class: 'kind' }, fullText ? t.textSyllabus : t.noSyllabus);
   const hits = r.hits.filter(x => x.count > 0).map(x => {
-    const group = h('div', { class: 'hit' }, h('span', { class: 'chip' }, `${x.keyword} · ${x.count} 處`));
+    const group = h('div', { class: 'hit' }, h('span', { class: 'chip' }, t.hitCount(x.keyword, x.count)));
     if (x.snippets[0]) group.append(snippet(x.snippets[0]));
     if (x.snippets.length > 1) {
-      group.append(h('details', {}, h('summary', {}, `再顯示 ${x.snippets.length - 1} 段`), ...x.snippets.slice(1).map(snippet)));
+      group.append(h('details', {}, h('summary', {}, t.moreSnippets(x.snippets.length - 1)), ...x.snippets.slice(1).map(snippet)));
     }
     return group;
   });
   return h('li', {}, h('article', { class: 'card' },
-    h('div', { class: 'card-head' }, h('div', { class: 'card-title' }, h('h3', {}, r.name || r.code), meta), link),
-    brief(r),
+    h('div', { class: 'card-head' }, h('div', { class: 'card-title' }, title, alt, meta), link),
+    brief(r, t),
     h('div', { class: 'hits' }, ...hits),
-    fullText ? h('details', { class: 'full' }, h('summary', {}, '查看完整課綱'), h('div', { class: 'fulltext' }, fullText)) : null));
+    fullText ? h('details', { class: 'full' }, h('summary', {}, t.fullText), h('div', { class: 'fulltext' }, fullText)) : null));
 }
 
-export function mount(host: El, base = new URL('.', scriptSrc).href) {
+export type MountOptions = { base?: string; lang?: Lang };
+
+/**
+ * 語言的優先順序：使用者按過切換鈕記下的選擇 > 呼叫端指定（data-lang 屬性或 options.lang）> 繁體中文。
+ * 第二個參數也可直接傳 base 網址（舊用法）。
+ */
+export function mount(host: El, opts: string | MountOptions = {}) {
+  const o: MountOptions = typeof opts === 'string' ? { base: opts } : opts;
+  const base = o.base ?? new URL('.', scriptSrc).href;
+  const attrLang = host.getAttribute('data-lang');
+  let lang: Lang = loadLang() ?? o.lang ?? (isLang(attrLang) ? attrLang : 'zh');
+  let t = MESSAGES[lang];
+
   const root = host.shadowRoot ?? host.attachShadow({ mode: 'open' });
   root.replaceChildren();
   root.append(h('style', {}, CSS));
 
   const uid = Math.random().toString(36).slice(2, 8);
   const select = h('select', { id: `sem-${uid}`, class: 'input' });
-  const input = h('input', { id: `q-${uid}`, class: 'input with-icon', type: 'search', placeholder: '例：人工智慧、永續、機器學習', autocomplete: 'off', enterkeyhint: 'search' });
-  const button = h('button', { type: 'submit', class: 'btn' }, icon(ICON_SEARCH), '搜尋');
+  const input = h('input', { id: `q-${uid}`, class: 'input with-icon', type: 'search', autocomplete: 'off', enterkeyhint: 'search' });
+  const buttonText = h('span', {});
+  const button = h('button', { type: 'submit', class: 'btn' }, icon(ICON_SEARCH), buttonText);
   const status = h('p', { class: 'status', role: 'status' });
   const list = h('ul', { class: 'results' });
   const more = h('button', { type: 'button', class: 'btn secondary more', hidden: '' });
+  const semLabel = h('label', { for: select.id });
+  const kwLabel = h('label', { for: input.id });
+  const hint = h('p', { class: 'hint' });
+  const note = h('p', { class: 'hint note' });
+  const langBtn = h('button', { type: 'button', class: 'lang-toggle' });
 
   const form = h('form', { class: 'panel', role: 'search' },
     h('div', { class: 'row' },
-      h('div', { class: 'field sem' }, h('label', { for: select.id }, '學期'), select),
-      h('div', { class: 'field grow' }, h('label', { for: input.id }, '關鍵字'),
+      h('div', { class: 'field sem' }, semLabel, select),
+      h('div', { class: 'field grow' }, kwLabel,
         h('div', { class: 'search-line' }, h('div', { class: 'input-wrap' }, icon(ICON_SEARCH), input), button))),
-    h('p', { class: 'hint' }, '搜尋課綱（PDF、文字檔）與課程簡述、TAG。多個關鍵字用逗號或頓號分隔，符合任一個就會列出；不分大小寫、會忽略斷行與空白。英文縮寫（如 AI）只比對完整單字。'));
-  root.append(h('div', { class: 'wrap' }, form, status, list, more));
+    hint, note);
+  const wrap = h('div', { class: 'wrap' }, h('div', { class: 'lang-bar' }, langBtn), form, status, list, more);
+  root.append(wrap);
 
   let semesters: SemesterInfo[] = [];
   const cache = new Map<string, Promise<Indexed[]>>();
@@ -100,6 +126,34 @@ export function mount(host: El, base = new URL('.', scriptSrc).href) {
   let results: Result[] = [];
   let shown = 0;
   let run = 0;
+  // 狀態列的內容記成函式，切換語言時可以用新語言重畫
+  let statusMsg: (t: Messages) => string = x => x.loadingList;
+  const setStatus = (f: (t: Messages) => string) => { statusMsg = f; status.textContent = f(t); };
+
+  const semName = (s: SemesterInfo) => (lang === 'en' ? semesterLabelEn(s.id) : s.label);
+  const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+  function renderOptions() {
+    const value = select.value;
+    select.replaceChildren(...semesters.map(s => h('option', { value: s.id }, t.semesterOption(semName(s), s.count))));
+    if (semesters.some(s => s.id === value)) select.value = value; else if (semesters.length) select.selectedIndex = 0;
+  }
+
+  function renderChrome() {
+    wrap.setAttribute('lang', t.htmlLang);
+    langBtn.textContent = t.switchTo;
+    langBtn.setAttribute('lang', lang === 'en' ? 'zh-Hant' : 'en');
+    langBtn.setAttribute('aria-label', t.switchLabel);
+    semLabel.textContent = t.semester;
+    kwLabel.textContent = t.keyword;
+    input.placeholder = t.placeholder;
+    buttonText.textContent = t.search;
+    hint.textContent = t.hint;
+    note.textContent = t.dataNote;
+    note.hidden = !t.dataNote;
+    renderOptions();
+    status.textContent = statusMsg(t);
+  }
 
   const getJson = <T,>(file: string): Promise<T> => fetch(new URL(`data/${file}`, base))
     .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<T>; });
@@ -119,13 +173,19 @@ export function mount(host: El, base = new URL('.', scriptSrc).href) {
     return cache.get(id)!;
   };
 
-  function renderMore() {
-    const next = results.slice(shown, shown + PAGE);
-    list.append(...next.map(r => card(r, r.pdfUrl ? undefined : byCode.get(r.code)?.text)));
-    shown += next.length;
+  const cardOf = (r: Result) => card(r, t, lang, r.pdfUrl ? undefined : byCode.get(r.code)?.text);
+
+  function updateMore() {
     const left = results.length - shown;
     more.hidden = left <= 0;
-    more.textContent = `顯示更多（還有 ${left} 門）`;
+    more.textContent = t.more(left);
+  }
+
+  function renderMore() {
+    const next = results.slice(shown, shown + PAGE);
+    list.append(...next.map(cardOf));
+    shown += next.length;
+    updateMore();
   }
 
   async function doSearch() {
@@ -134,10 +194,10 @@ export function mount(host: El, base = new URL('.', scriptSrc).href) {
     const mine = ++run;
     const sem = semesters.find(s => s.id === id);
     if (!sem) return;
-    if (!cache.has(id)) status.textContent = `載入${sem.label}課綱資料中…`;
+    if (!cache.has(id)) setStatus(x => x.loadingSemester(lang === 'en' ? semesterLabelEn(sem.id) : sem.label));
     let index: Indexed[];
     try { index = await loadSemester(sem); } catch (e) {
-      if (mine === run) status.textContent = `課綱資料載入失敗（${e instanceof Error ? e.message : e}），請稍後再試。`;
+      if (mine === run) setStatus(x => x.semesterFailed(errText(e)));
       return;
     }
     if (mine !== run) return; // 使用者已經改了條件
@@ -145,13 +205,26 @@ export function mount(host: El, base = new URL('.', scriptSrc).href) {
     const r = search(index, q);
     results = r.results; shown = 0; list.replaceChildren();
     const updated = sem.updatedAt.slice(0, 10);
+    const label = () => semName(sem);
     if (r.keywords.length === 0) {
-      status.textContent = `${sem.label}：共 ${sem.count} 份課綱（資料更新：${updated}）。輸入關鍵字開始搜尋。`;
+      setStatus(x => x.idle(label(), sem.count, updated));
       more.hidden = true;
       return;
     }
-    status.textContent = results.length ? `${sem.label}：共 ${results.length} 門課程符合` : `${sem.label}：沒有課綱包含這些關鍵字。`;
+    const n = results.length;
+    setStatus(x => (n ? x.found(label(), n) : x.none(label())));
     renderMore();
+  }
+
+  function setLang(next: Lang) {
+    if (next === lang) return;
+    lang = next; t = MESSAGES[lang];
+    saveLang(lang);
+    renderChrome();
+    // 保留目前已展開的筆數，以新語言重畫結果
+    list.replaceChildren(...results.slice(0, shown).map(cardOf));
+    updateMore();
+    host.dispatchEvent(new CustomEvent('nss-langchange', { detail: { lang }, bubbles: true }));
   }
 
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -159,18 +232,25 @@ export function mount(host: El, base = new URL('.', scriptSrc).href) {
   form.addEventListener('submit', e => { e.preventDefault(); clearTimeout(timer); doSearch(); });
   select.addEventListener('change', doSearch);
   more.addEventListener('click', renderMore);
+  langBtn.addEventListener('click', () => setLang(lang === 'zh' ? 'en' : 'zh'));
 
-  status.textContent = '載入學期清單中…';
+  renderChrome();
+  setStatus(x => x.loadingList);
   const ready = fetch(new URL('data/semesters.json', base))
     .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<SemesterInfo[]>; })
     .then(list => {
       semesters = list;
-      if (!list.length) { status.textContent = '目前還沒有課綱資料。'; return; }
-      select.replaceChildren(...list.map(s => h('option', { value: s.id }, `${s.label}（${s.count} 門）`)));
+      if (!list.length) { setStatus(x => x.noData); return; }
+      renderOptions();
       return doSearch();
     })
-    .catch(e => { status.textContent = `學期清單載入失敗（${e instanceof Error ? e.message : e}），請稍後再試。`; });
-  return { root, ready, search: (q: string) => { input.value = q; return doSearch(); } };
+    .catch(e => { setStatus(x => x.listFailed(errText(e))); });
+  return {
+    root, ready,
+    search: (q: string) => { input.value = q; return doSearch(); },
+    setLang,
+    get lang() { return lang; },
+  };
 }
 
 function autoMount() {

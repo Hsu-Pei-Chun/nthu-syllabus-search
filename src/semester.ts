@@ -18,3 +18,16 @@ export function semesterOf(codes: string[]): string {
   if (!best) throw new Error('無法從科號判斷學期（科號前 5 碼應為學年度＋學期，例如 11420）');
   return best[0];
 }
+
+/** 英文學期名稱：民國學年度 + 1911 為秋季班的西元年，例如 11410 = Fall 2025、11420 = Spring 2026 */
+export function semesterLabelEn(id: string): string {
+  const m = /^(\d{3})(\d{2})$/.exec(id);
+  if (!m) return id;
+  const year = Number(m[1]) + 1911;
+  switch (m[2]) {
+    case '10': return `Fall ${year}`;
+    case '20': return `Spring ${year + 1}`;
+    case '30': return `Summer ${year + 1}`;
+    default: return `${year}–${String(year + 1).slice(2)} Term ${m[2]}`;
+  }
+}
