@@ -30,6 +30,20 @@ GitHub Pages：widget.js ＋ data/
 
 小工具以 Shadow DOM 隔離樣式，CMS 的版型不會影響它，它也不會影響 CMS。
 
+### 中英雙語
+
+小工具右上角有「English／中文」切換鈕，預設繁體中文，使用者的選擇會記在瀏覽器（localStorage），下次開啟沿用。
+英文頁面要預設英文時，在 div 加上 `data-lang="en"`（使用者自己切換過的話以使用者的選擇為準）：
+
+```html
+<div id="nthu-syllabus-search" data-lang="en"></div>
+```
+
+- 英文模式的課名改用資料裡的英文課名（中文課名列在下方），學期顯示為 Fall 2025、Spring 2026 等
+- 課綱全文、簡述、TAG 是老師提供的原文，大多只有中文，不翻譯；搜尋仍比對全部內容，所以英文課名也搜得到
+- 切換時小工具會在外層發出 `nss-langchange` 事件（`event.detail.lang` 為 `zh` 或 `en`），嵌入頁可據此切換自己的文字；示範頁即如此
+- 介面文字集中在 `src/i18n.ts`
+
 ## 新學期匯入
 
 每學期有三個來源，都要匯入（同一學期會合併；順序不拘，也可以分次執行）：

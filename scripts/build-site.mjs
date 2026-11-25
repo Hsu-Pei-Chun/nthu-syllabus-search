@@ -28,19 +28,30 @@ await writeFile('site/index.html', `<!doctype html>
 </style>
 </head>
 <body>
-<header>國立清華大學 課綱搜尋</header>
+<header data-en="National Tsing Hua University · Syllabus Search">國立清華大學 課綱搜尋</header>
 <main>
-  <h1>課綱關鍵字搜尋</h1>
-  <p class="lead">搜尋校方公告的全部課程大綱（PDF 與文字檔）及課程簡述、TAG，找出包含指定關鍵字的課程。</p>
+  <h1 data-en="Syllabus Keyword Search">課綱關鍵字搜尋</h1>
+  <p class="lead" data-en="Search every syllabus published by the university (PDF and text), plus course descriptions and tags, for the keywords you need.">搜尋校方公告的全部課程大綱（PDF 與文字檔）及課程簡述、TAG，找出包含指定關鍵字的課程。</p>
   <div id="nthu-syllabus-search"></div>
   <details class="embed">
-    <summary>嵌入學校 CMS 的方法</summary>
-    <p>在 CMS 頁面的 HTML 原始碼貼上：</p>
+    <summary data-en="How to embed in the university CMS">嵌入學校 CMS 的方法</summary>
+    <p data-en="Paste this into the HTML source of the CMS page (add data-lang=&quot;en&quot; to the div to default to English):">在 CMS 頁面的 HTML 原始碼貼上（div 加上 data-lang="en" 可預設英文）：</p>
     <pre><code>&lt;div id="nthu-syllabus-search"&gt;&lt;/div&gt;
 &lt;script src="<span id="src"></span>" defer&gt;&lt;/script&gt;</code></pre>
   </details>
 </main>
-<script>document.getElementById('src').textContent = new URL('widget.js', location.href).href;</script>
+<script>
+document.getElementById('src').textContent = new URL('widget.js', location.href).href;
+// 示範頁跟著小工具的語言切換（小工具切換時會發出 nss-langchange 事件）
+const texts = [...document.querySelectorAll('[data-en]')].map(el => [el, el.textContent]);
+function applyLang(lang) {
+  document.documentElement.lang = lang === 'en' ? 'en' : 'zh-Hant';
+  document.title = lang === 'en' ? 'NTHU Syllabus Search' : '清大課綱搜尋';
+  for (const [el, zh] of texts) el.textContent = lang === 'en' ? el.dataset.en : zh;
+}
+try { applyLang(localStorage.getItem('nthu-syllabus-search:lang')); } catch {}
+document.addEventListener('nss-langchange', e => applyLang(e.detail.lang));
+</script>
 <script src="widget.js" defer></script>
 </body>
 </html>

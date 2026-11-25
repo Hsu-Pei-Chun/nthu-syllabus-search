@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 
 (window as unknown as { __NSS_NO_AUTOMOUNT__: boolean }).__NSS_NO_AUTOMOUNT__ = true;
 const { mount } = await import('../src/widget.ts');
@@ -9,12 +9,12 @@ const semesters = [
   { id: '11420', label: '114 學年度第 2 學期', url: 'u2', updatedAt: '2026-11-15T00:00:00Z', count: 2, pdf: 2, textDocs: 1, briefs: 2, noText: 0, failed: 0, failures: [] },
   { id: '11410', label: '114 學年度第 1 學期', url: 'u1', updatedAt: '2026-08-01T00:00:00Z', count: 1, noText: 0, failed: 0, failures: [] },
 ];
-const doc = (code: string, name: string, text: string) => ({ code, name, nameEn: '', teacher: '王老師', time: 'M3M4', pdfUrl: `https://pdf.example/${code}.pdf`, text });
+const doc = (code: string, name: string, text: string, nameEn = '') => ({ code, name, nameEn, teacher: '王老師', time: 'M3M4', pdfUrl: `https://pdf.example/${code}.pdf`, text });
 const files: Record<string, unknown> = {
   'data/semesters.json': semesters,
   'data/syllabi-11420.json': { docs: [
     // 命中處彼此相距超過前後文長度，才會各自成為一段片段
-    doc('11420AAA 100100', '人工智慧導論', Array(5).fill('AI 應用').join('，' + '其他課程內容'.repeat(10) + '，')),
+    doc('11420AAA 100100', '人工智慧導論', Array(5).fill('AI 應用').join('，' + '其他課程內容'.repeat(10) + '，'), 'Introduction to Artificial Intelligence'),
     doc('11420BBB 200200', '<img src=x onerror="window.__xss=1">', '本課提到 AI 一次'),
     { ...doc('11420CCC 300300', '文字檔的課', '一、課程說明\n永續發展<b>概論</b>'), pdfUrl: '' },
   ] },
@@ -32,12 +32,15 @@ beforeAll(() => {
   }));
 });
 
-async function setup() {
+beforeEach(() => localStorage.clear());
+
+async function setup(attrs: Record<string, string> = {}) {
   const host = document.createElement('div');
+  for (const [k, v] of Object.entries(attrs)) host.setAttribute(k, v);
   document.body.append(host);
   const w = mount(host, BASE);
   await w.ready;
-  return { ...w, $: (s: string) => w.root.querySelector(s) as HTMLElement, $$: (s: string) => [...w.root.querySelectorAll(s)] as HTMLElement[] };
+  return Object.assign(w, { $: (s: string) => w.root.querySelector(s) as HTMLElement, $$: (s: string) => [...w.root.querySelectorAll(s)] as HTMLElement[] });
 }
 
 describe('嵌入小工具', () => {
@@ -126,5 +129,63 @@ describe('嵌入小工具', () => {
     const w = await setup();
     expect(w.$('.status').textContent).toContain('載入失敗');
     files['data/semesters.json'] = semesters;
+  });
+});
+
+describe('中英雙語', () => {
+  it('預設繁體中文；按切換鈕改成英文介面，英文課名為主、中文課名為輔', async () => {
+    const w = await setup();
+    const toggle = w.$('.lang-toggle') as HTMLButtonElement;
+    expect(toggle.textContent).toBe('English');
+    expect(w.$('.wrap').getAttribute('lang')).toBe('zh-Hant');
+    await w.search('AI');
+    toggle.click();
+    expect(w.lang).toBe('en');
+    expect(w.$('.wrap').getAttribute('lang')).toBe('en');
+    expect(toggle.textContent).toBe('中文');
+    expect(w.$('label').textContent).toBe('Semester');
+    expect(w.$('button.btn').textContent).toBe('Search');
+    expect(w.$$('option').map(o => o.textContent)).toEqual(['Spring 2026 (2 courses)', 'Fall 2025 (1 course)']);
+    expect(w.$('.status').textContent).toBe('Spring 2026: 2 courses match');
+    const [first, second] = w.$$('article');
+    expect(first.querySelector('h3')!.textContent).toBe('Introduction to Artificial Intelligence');
+    expect(first.querySelector('.alt-name')!.textContent).toBe('人工智慧導論');
+    expect(first.querySelector('a.pdf')!.textContent).toBe('Open PDF');
+    expect(first.querySelector('.chip')!.textContent).toBe('AI · 5 matches');
+    expect(first.querySelector('.desc .label')!.textContent).toBe('Description');
+    // 沒有英文課名的課退回中文課名
+    expect(second.querySelector('h3')!.textContent).toBe('<img src=x onerror="window.__xss=1">');
+    expect(second.querySelector('.alt-name')).toBeNull();
+  });
+
+  it('切回中文後恢復原本的介面', async () => {
+    const w = await setup();
+    await w.search('AI');
+    w.setLang('en');
+    w.setLang('zh');
+    expect(w.$('.status').textContent).toBe('114 學年度第 2 學期：共 2 門課程符合');
+    expect(w.$$('article')[0].querySelector('h3')!.textContent).toBe('人工智慧導論');
+    expect(w.$$('article')[0].querySelector('.alt-name')).toBeNull();
+  });
+
+  it('記住選擇：下次載入沿用上次的語言', async () => {
+    (await setup()).setLang('en');
+    const w = await setup();
+    expect(w.lang).toBe('en');
+    expect(w.$('.status').textContent).toBe('Spring 2026: 2 syllabi (updated 2026-11-15). Enter keywords to search.');
+  });
+
+  it('CMS 可用 data-lang 指定預設語言，但使用者的選擇優先', async () => {
+    expect((await setup({ 'data-lang': 'en' })).lang).toBe('en');
+    localStorage.setItem('nthu-syllabus-search:lang', 'zh');
+    expect((await setup({ 'data-lang': 'en' })).lang).toBe('zh');
+  });
+
+  it('切換時通知外層頁面', async () => {
+    const w = await setup();
+    const seen: string[] = [];
+    document.body.addEventListener('nss-langchange', e => seen.push((e as CustomEvent).detail.lang));
+    w.setLang('en');
+    expect(seen).toEqual(['en']);
   });
 });
